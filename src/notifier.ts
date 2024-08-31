@@ -15,15 +15,21 @@ logToPublicLog(
 );
 
 export async function send(message: string) {
-  logger(message);
   if (message.length > 4096) {
     send(`Next message is too long (${message.length} characters), truncating`);
-    return await bot?.telegram.sendMessage(
-      TELEGRAM_CHAT_ID,
-      message.slice(0, 4096),
-    );
+    return send(message.slice(0, 4096));
   }
+  logger(message);
   return await bot?.telegram.sendMessage(TELEGRAM_CHAT_ID, message);
+}
+
+export async function sendPhoto(photoPath: string, caption: string) {
+  logger(`Sending photo`, { photoPath, caption });
+  return await bot?.telegram.sendPhoto(
+    TELEGRAM_CHAT_ID,
+    { source: photoPath },
+    { caption, has_spoiler: true },
+  );
 }
 
 export async function deleteMessage(message: Message.TextMessage) {
@@ -36,6 +42,12 @@ export async function editMessage(
 ) {
   if (message !== undefined) {
     try {
+      /**
+       * Telegram has limit on the number of messages per second.
+       * To avoid getting 429 errors, we wait a bit before sending the edit request.
+       * According to the docs, the limit is 30 messages per second so we should be safe with 250ms.
+       */
+      await new Promise((resolve) => setTimeout(resolve, 250));
       await bot?.telegram.editMessageText(
         TELEGRAM_CHAT_ID,
         message,
