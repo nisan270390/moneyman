@@ -1,9 +1,10 @@
 import type { CompanyTypes } from "israeli-bank-scrapers";
-import type { Transaction } from "israeli-bank-scrapers/lib/transactions";
+import type { Transaction } from "israeli-bank-scrapers/lib/transactions.js";
 import type {
   ScraperScrapingResult,
   ScraperCredentials,
 } from "israeli-bank-scrapers";
+import { SaveStats } from "./saveStats.js";
 export type { Transaction };
 
 export type AccountConfig = ScraperCredentials & {
@@ -29,19 +30,10 @@ export type CategoryDef = {
   eq?: Array<string>;
 };
 
-export interface SaveStats {
-  name: string;
-  table: string;
-  total: number;
-  added: number;
-  pending: number;
-  skipped: number;
-  existing: number;
-  highlightedTransactions?: Record<string, Array<TransactionRow>>;
-}
-
 export interface TransactionStorage {
   canSave(): boolean;
-  init(): Promise<void>;
-  saveTransactions(txns: Array<TransactionRow>): Promise<SaveStats>;
+  saveTransactions(
+    txns: Array<TransactionRow>,
+    onProgress: (status: string) => Promise<void>,
+  ): Promise<SaveStats>;
 }

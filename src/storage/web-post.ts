@@ -1,29 +1,24 @@
 import { createLogger } from "../utils/logger.js";
-import type {
-  TransactionRow,
-  TransactionStorage,
-  SaveStats,
-} from "../types.js";
+import type { TransactionRow, TransactionStorage } from "../types.js";
 import { WEB_POST_URL } from "../config.js";
 import { TransactionStatuses } from "israeli-bank-scrapers/lib/transactions.js";
 import { transactionRow } from "./sheets.js";
+import { createSaveStats } from "../saveStats.js";
 
 const logger = createLogger("WebPostStorage");
 
 export class WebPostStorage implements TransactionStorage {
   private url = WEB_POST_URL;
 
-  async init() {
-    logger("init");
-  }
-
   canSave() {
     return Boolean(this.url) && URL.canParse(this.url);
   }
 
-  async saveTransactions(txns: Array<TransactionRow>) {
+  async saveTransactions(
+    txns: Array<TransactionRow>,
+    onProgress: (status: string) => Promise<void>,
+  ) {
     logger("saveTransactions");
-    await this.init();
 
     const nonPendingTxns = txns.filter(
       (txn) => txn.status !== TransactionStatuses.Pending,
@@ -31,13 +26,16 @@ export class WebPostStorage implements TransactionStorage {
 
     logger(`Posting ${nonPendingTxns.length} transactions to ${this.url}`);
 
-    const response = await fetch(this.url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(nonPendingTxns.map((tx) => transactionRow(tx))),
-    });
+    const [response] = await Promise.all([
+      fetch(this.url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(nonPendingTxns.map((tx) => transactionRow(tx))),
+      }),
+      onProgress("Sending"),
+    ]);
 
     if (!response.ok) {
       logger(`Failed to post transactions: ${response.statusText}`);
@@ -47,16 +45,9 @@ export class WebPostStorage implements TransactionStorage {
     const { added = nonPendingTxns.length, skipped = NaN } =
       await response.json();
 
-    const pending = txns.length - nonPendingTxns.length;
-    const stats: SaveStats = {
-      name: "WebPostStorage",
-      table: "web-post",
-      total: txns.length,
-      added,
-      pending,
-      skipped: skipped + pending,
-      existing: skipped,
-    };
+    const stats = createSaveStats("WebPostStorage", "web-post", txns);
+    stats.added = added;
+    stats.skipped += stats.pending;
 
     return stats;
   }

@@ -3,15 +3,12 @@ import {
   BUXFER_PASSWORD,
   BUXFER_ACCOUNTS,
 } from "../config.js";
-import { SaveStats, TransactionRow, TransactionStorage } from "../types.js";
+import { TransactionRow, TransactionStorage } from "../types.js";
 import { createLogger } from "./../utils/logger.js";
 import { parseISO, format } from "date-fns";
 import { TransactionStatuses } from "israeli-bank-scrapers/lib/transactions.js";
-import {
-  BuxferApiClient,
-  BuxferTransaction,
-  AddTransactionsResponse,
-} from "buxfer-ts-client";
+import { BuxferApiClient, BuxferTransaction } from "buxfer-ts-client";
+import { createSaveStats } from "../saveStats.js";
 
 const BUXFER_DATE_FORMAT = "yyyy-MM-dd";
 const logger = createLogger("BuxferStorage");
@@ -30,24 +27,30 @@ export class BuxferStorage implements TransactionStorage {
     return Boolean(BUXFER_USER_NAME && BUXFER_PASSWORD && BUXFER_ACCOUNTS);
   }
 
-  async saveTransactions(txns: Array<TransactionRow>) {
+  async saveTransactions(
+    txns: Array<TransactionRow>,
+    onProgress: (status: string) => Promise<void>,
+  ) {
     await this.init();
 
-    const stats = {
-      name: "BuxferStorage",
-      table: `Accounts: "${Array.from(this.accountToBuxferAccount.keys())}"`,
-      total: txns.length,
-      added: 0,
-      pending: 0,
-      existing: 0,
-      skipped: 0,
-    } satisfies SaveStats;
+    const stats = createSaveStats(
+      "BuxferStorage",
+      `Accounts: "${Array.from(this.accountToBuxferAccount.keys())}"`,
+      txns,
+    );
 
     // Initialize an array to store non-pending and non-empty account ID transactions on Buxfer format.
     const txToSend: BuxferTransaction[] = [];
     const missingAccounts = new Set<string>();
 
     for (const tx of txns) {
+      const isPending = tx.status === TransactionStatuses.Pending;
+      // Ignore pending and only upload completed transactions
+      if (isPending) {
+        stats.skipped++;
+        continue;
+      }
+
       const accountId = this.accountToBuxferAccount.get(tx.account);
       if (!accountId) {
         missingAccounts.add(tx.account);
@@ -70,11 +73,13 @@ export class BuxferStorage implements TransactionStorage {
       logger(
         `sending to Buxfer accounts: "${this.accountToBuxferAccount.keys()}"`,
       );
-      const resp: AddTransactionsResponse =
-        await this.buxferClient.addTransactions(txToSend, true);
+      const [resp] = await Promise.all([
+        this.buxferClient.addTransactions(txToSend, false),
+        onProgress("Sending"),
+      ]);
       logger("transactions sent to Buxfer successfully!");
       stats.added = resp.addedTransactionIds.length;
-      stats.existing = resp.duplicatedTransactionIds.length;
+      stats.existing = resp.existingTransactionIds.length;
       stats.skipped += stats.existing;
     }
 
